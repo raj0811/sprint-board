@@ -31,8 +31,8 @@ export async function getTaskDetail(userId: string, taskId: string): Promise<Tas
   if (!project) return null;
 
   const [sprintDocs, subtaskDocs, commentDocs, counts, canvases] = await Promise.all([
-    db.collection("sprints").find({ projectId: { $in: objectIdOrString(String(project._id)) } }, { projection: { name: 1, title: 1, status: 1 } }).sort({ createdAt: -1 }).toArray(),
-    db.collection("subtasks").find({ taskId: stored._id }).sort({ createdAt: 1 }).toArray(),
+    db.collection("sprints").find({ projectId: { $in: objectIdOrString(String(project._id)) } }, { projection: { name: 1, title: 1, status: 1 } }).sort({ order: 1, createdAt: -1 }).toArray(),
+    db.collection("subtasks").find({ taskId: stored._id }).sort({ order: 1, createdAt: 1 }).toArray(),
     db.collection("comments").find({ taskId: stored._id }).sort({ createdAt: 1 }).toArray(),
     getTaskCounts([stored._id]),
     listTaskCanvases(stored._id),

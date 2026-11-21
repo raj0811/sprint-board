@@ -27,7 +27,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
       projectId: project._id,
       status: { $in: ["active", "Active", "in progress"] },
     }, { projection: { _id: 1 } });
+    const first = await db.collection("sprints").find({ projectId: project._id, order: { $type: "number" } }).sort({ order: 1 }).limit(1).next();
     const result = await db.collection("sprints").insertOne({
+      ...(typeof first?.order === "number" ? { order: first.order - 1 } : {}),
       projectId: project._id,
       name: title,
       description,

@@ -30,7 +30,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
 
     const count = await db.collection("tasks").countDocuments({ projectId: projectRef, sprintId: sprint._id });
     const prefix = typeof project.key === "string" && project.key.trim() ? project.key.trim().toUpperCase() : "TASK";
+    const last = await db.collection("tasks").find({ projectId: projectRef, sprintId: sprint._id, order: { $type: "number" } }).sort({ order: -1 }).limit(1).next();
     const result = await db.collection("tasks").insertOne({
+      order: typeof last?.order === "number" ? last.order + 1 : 0,
       projectId: projectRef,
       sprintId: sprint._id,
       key: `${prefix}-${count + 1}`,

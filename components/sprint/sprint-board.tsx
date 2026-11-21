@@ -1,15 +1,22 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { closestCorners, DndContext, DragOverlay, type DragEndEvent, type DragOverEvent, type DragStartEvent } from "@dnd-kit/core";
+import { arrayMove } from "@dnd-kit/sortable";
 import type { Sprint, Task, TaskStatus } from "@/lib/board-data";
 import { BoardColumn, statusDots } from "@/components/sprint/board-column";
+import { SprintTabs } from "@/components/sprint/sprint-tabs";
+import { TaskCard } from "@/components/sprint/task-card";
 import { Icon } from "@/components/ui/icon";
+import { useDragSensors } from "@/components/ui/sortable";
 import { daysUntil, formatDate } from "@/lib/format";
 
 export type StatusFilter = "All" | TaskStatus;
+export type BoardColumns = Record<TaskStatus, string[]>;
 const statuses: TaskStatus[] = ["To do", "In progress", "Done"];
 
 type SprintBoardProps = {
+  projectId: string;
   tasks: Task[];
   backlogCount: number;
   sprint: Sprint | null;
@@ -27,11 +34,29 @@ type SprintBoardProps = {
   onCreateSprint: () => void;
   onEditSprint: (sprint: Sprint) => void;
   onSelectSprint: (sprintId: string) => void;
+  /** Persist a new card layout after a drag (status per column + order within it). */
+  onReorderTasks: (columns: BoardColumns) => void;
+  onError: (message: string) => void;
 };
+
+function columnsFrom(tasks: Task[]): BoardColumns {
+  return { "To do": tasks.filter((task) => task.status === "To do").map((task) => task.id), "In progress": tasks.filter((task) => task.status === "In progress").map((task) => task.id), Done: tasks.filter((task) => task.status === "Done").map((task) => task.id) };
+}
 
 export function SprintBoard(props: SprintBoardProps) {
   const { tasks, backlogCount, sprint, query, onQueryChange, filter, onFilterChange, actionError, onDismissError, onCreateTask, onCreateSprint } = props;
   const searchRef = useRef<HTMLInputElement>(null);
+  const sensors = useDragSensors();
+
+  // Local card layout while dragging; reset whenever fresh tasks arrive from the server.
+  const [columns, setColumns] = useState<BoardColumns>(() => columnsFrom(tasks));
+  const [seenTasks, setSeenTasks] = useState(tasks);
+  if (seenTasks !== tasks) {
+    setSeenTasks(tasks);
+    setColumns(columnsFrom(tasks));
+  }
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const dragStart = useRef<BoardColumns | null>(null);
 
   // Ctrl/⌘+K focuses search.
   useEffect(() => {
@@ -44,6 +69,8 @@ export function SprintBoard(props: SprintBoardProps) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  const tabs = <SprintTabs projectId={props.projectId} sprints={props.sprints} selectedId={sprint?.id} onSelect={props.onSelectSprint} onCreate={onCreateSprint} onError={props.onError} />;
 
   if (!sprint) {
     return <section className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
@@ -59,8 +86,62 @@ export function SprintBoard(props: SprintBoardProps) {
   const counts = Object.fromEntries(statuses.map((status) => [status, matching.filter((task) => task.status === status).length])) as Record<TaskStatus, number>;
   const shownStatuses = filter === "All" ? statuses : [filter];
   const columnProps = { onStatusChange: props.onStatusChange, onEditTask: props.onEditTask, onDeleteTask: props.onDeleteTask, onCreateTask };
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  // Dragging only makes sense with the full board visible.
+  const canDrag = !needle && filter === "All";
+  const columnTasks = (status: TaskStatus) => columns[status].flatMap((id) => {
+    const task = taskById.get(id);
+    return task ? [{ ...task, status }] : [];
+  });
+
+  const containerOf = (id: string): TaskStatus | undefined =>
+    id.startsWith("column:") ? id.slice("column:".length) as TaskStatus : statuses.find((status) => columns[status].includes(id));
+
+  function onDragStart({ active }: DragStartEvent) {
+    setActiveId(String(active.id));
+    dragStart.current = columns;
+  }
+
+  // Moving over another column: move the card there so the gap opens where it will land.
+  function onDragOver({ active, over }: DragOverEvent) {
+    if (!over) return;
+    const from = containerOf(String(active.id));
+    const to = containerOf(String(over.id));
+    if (!from || !to || from === to) return;
+    setColumns((current) => {
+      const target = current[to];
+      const overIndex = target.indexOf(String(over.id));
+      const index = overIndex === -1 ? target.length : overIndex;
+      return { ...current, [from]: current[from].filter((id) => id !== active.id), [to]: [...target.slice(0, index), String(active.id), ...target.slice(index)] };
+    });
+  }
+
+  function onDragEnd({ active, over }: DragEndEvent) {
+    setActiveId(null);
+    const start = dragStart.current;
+    dragStart.current = null;
+    let next = columns;
+    const column = over ? containerOf(String(over.id)) : undefined;
+    if (column && containerOf(String(active.id)) === column) {
+      const ids = columns[column];
+      const from = ids.indexOf(String(active.id));
+      const to = over && !String(over.id).startsWith("column:") ? ids.indexOf(String(over.id)) : ids.length - 1;
+      if (from !== to && from !== -1 && to !== -1) next = { ...columns, [column]: arrayMove(ids, from, to) };
+    }
+    setColumns(next);
+    if (start && statuses.some((status) => start[status].join() !== next[status].join())) props.onReorderTasks(next);
+  }
+
+  function onDragCancel() {
+    setActiveId(null);
+    if (dragStart.current) setColumns(dragStart.current);
+    dragStart.current = null;
+  }
+
+  const activeTask = activeId ? taskById.get(activeId) : undefined;
 
   return <section>
+    {tabs}
     <SprintHeader {...props} />
 
     {/* Toolbar */}
@@ -85,12 +166,18 @@ export function SprintBoard(props: SprintBoardProps) {
     {actionError && <div role="alert" className="mb-4 flex items-center gap-2 rounded-xl bg-danger-soft px-4 py-3 text-sm text-danger-ink"><span className="flex-1">{actionError}</span><button onClick={onDismissError} className="grid size-7 place-items-center rounded-md hover:bg-danger-soft-hover" aria-label="Dismiss"><Icon name="close" size={14} /></button></div>}
 
     {needle && matching.length === 0 ? <p className="rounded-2xl border border-dashed border-line bg-surface py-12 text-center text-sm text-muted">No tasks match “{query.trim()}”.</p>
-      : filter === "All"
-        // Phones: swipeable columns. Tablet and up: three-column grid.
-        ? <div className="no-scrollbar -mx-4 flex snap-x snap-mandatory scroll-px-4 gap-3 overflow-x-auto px-4 pb-2 sm:-mx-6 sm:scroll-px-6 sm:px-6 md:mx-0 md:grid md:grid-cols-3 md:overflow-visible md:px-0 lg:gap-5">
-          {shownStatuses.map((status) => <BoardColumn key={status} status={status} tasks={matching.filter((task) => task.status === status)} className="w-[85%] shrink-0 snap-start sm:w-[60%] md:w-auto" {...columnProps} />)}
-        </div>
-        : <BoardColumn status={filter} tasks={matching.filter((task) => task.status === filter)} wide {...columnProps} />}
+      : <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd} onDragCancel={onDragCancel}>
+        {filter === "All"
+          // Phones: swipeable columns (snap is off while dragging so the board can auto-scroll). Tablet and up: three-column grid.
+          ? <div className={`no-scrollbar -mx-4 flex scroll-px-4 gap-3 overflow-x-auto px-4 pb-2 sm:-mx-6 sm:scroll-px-6 sm:px-6 md:mx-0 md:grid md:grid-cols-3 md:overflow-visible md:px-0 lg:gap-5 ${activeId ? "" : "snap-x snap-mandatory"}`}>
+            {shownStatuses.map((status) => <BoardColumn key={status} status={status} sortable={canDrag} tasks={canDrag ? columnTasks(status) : matching.filter((task) => task.status === status)} className="w-[85%] shrink-0 snap-start sm:w-[60%] md:w-auto" {...columnProps} />)}
+          </div>
+          : <BoardColumn status={filter} tasks={matching.filter((task) => task.status === filter)} wide {...columnProps} />}
+        <DragOverlay dropAnimation={{ duration: 180, easing: "ease-out" }}>
+          {activeTask && <TaskCard task={activeTask} onStatusChange={() => {}} onEdit={() => {}} onDelete={() => {}} dragState="overlay" />}
+        </DragOverlay>
+      </DndContext>}
+    {!canDrag && tasks.length > 1 && <p className="mt-2 text-center text-xs text-faint">Clear the search and show all statuses to drag tasks into a new order.</p>}
 
     {backlogCount > 0 && <p className="mt-5 flex items-center gap-2 text-sm text-muted"><Icon name="folder" size={16} /><strong className="font-semibold text-ink-soft">{backlogCount}</strong> unscheduled {backlogCount === 1 ? "task" : "tasks"} in backlog</p>}
 
@@ -99,7 +186,7 @@ export function SprintBoard(props: SprintBoardProps) {
   </section>;
 }
 
-function SprintHeader({ tasks, sprint, sprints, onSelectSprint, onEditSprint, onCreateSprint }: SprintBoardProps) {
+function SprintHeader({ tasks, sprint, onEditSprint }: SprintBoardProps) {
   if (!sprint) return null;
   const active = sprint.status.toLowerCase() === "active";
   const done = tasks.filter((task) => task.status === "Done").length;
@@ -112,9 +199,7 @@ function SprintHeader({ tasks, sprint, sprints, onSelectSprint, onEditSprint, on
       <span className="mt-0.5 hidden size-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-500 sm:grid"><Icon name="sprint" size={20} /></span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          {sprints.length > 1
-            ? <div className="relative min-w-0 max-w-full"><select value={sprint.id} onChange={(event) => onSelectSprint(event.target.value)} aria-label="Select sprint" className="max-w-full appearance-none truncate rounded-lg bg-transparent py-0.5 pr-7 text-lg font-bold outline-none hover:bg-canvas focus-visible:ring-2 focus-visible:ring-brand-100">{sprints.map((item) => <option key={item.id} value={item.id}>{item.name}{item.status.toLowerCase() === "active" ? " (active)" : ""}</option>)}</select><Icon name="down" size={16} className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted" /></div>
-            : <h2 className="m-0 truncate text-lg font-bold">{sprint.name}</h2>}
+          <h2 className="m-0 truncate text-lg font-bold">{sprint.name}</h2>
           <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize ${active ? "bg-success-soft text-success-ink" : "bg-sunken text-muted"}`}><i className={`size-1.5 rounded-full ${active ? "bg-success" : "bg-faint"}`} />{sprint.status}</span>
         </div>
         {(dateRange || remaining !== null) && <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted">
@@ -124,7 +209,6 @@ function SprintHeader({ tasks, sprint, sprints, onSelectSprint, onEditSprint, on
       </div>
       <div className="flex shrink-0 items-center gap-1">
         <button onClick={() => onEditSprint(sprint)} className="grid size-9 place-items-center rounded-lg text-muted hover:bg-canvas hover:text-ink" aria-label="Edit sprint" title="Edit sprint"><Icon name="edit" size={17} /></button>
-        <button onClick={onCreateSprint} className="flex h-9 items-center gap-1.5 rounded-lg border border-line px-2.5 text-sm font-medium text-ink-soft hover:bg-canvas" aria-label="New sprint"><Icon name="plus" size={16} /><span className="hidden sm:inline">New sprint</span></button>
       </div>
     </div>
     {sprint.description && <p className="mb-0 mt-3 text-sm leading-relaxed text-ink-soft">{sprint.description}</p>}

@@ -2,6 +2,7 @@ import "server-only";
 import { ObjectId, type Document } from "mongodb";
 import { getDatabase } from "@/lib/mongodb";
 import { getProjectTeam, ownerIdOf, type Team } from "@/lib/team";
+import { listFeatures, type Feature } from "@/lib/features";
 
 export type TaskStatus = "To do" | "In progress" | "Done";
 export type Task = {
@@ -32,6 +33,7 @@ export type BoardData = {
   tasks: Task[];
   backlogCount: number;
   team: Team | null;
+  features: Feature[];
 };
 
 export function text(value: unknown, fallback = "") {
@@ -67,6 +69,10 @@ export async function getBoardData(userId: string, selectedProjectId?: string, s
       { owner_id: { $in: userIds } }, { memberIds: { $in: userIds } },
     ],
   }).sort({ updatedAt: -1, createdAt: -1 }).toArray();
+  const account = ObjectId.isValid(userId) ? await db.collection("users").findOne({ _id: new ObjectId(userId) }, { projection: { projectOrder: 1 } }) : null;
+  const savedOrder: string[] = Array.isArray(account?.projectOrder) ? account.projectOrder.map(String) : [];
+  const rank = (id: string) => { const index = savedOrder.indexOf(id); return index === -1 ? -1 : index; };
+  accessibleProjects.sort((a, b) => rank(String(a._id)) - rank(String(b._id))); // stable: unranked keep recency order
 
   const projects = accessibleProjects.map((project) => ({
     id: String(project._id),
@@ -75,11 +81,11 @@ export async function getBoardData(userId: string, selectedProjectId?: string, s
   }));
   const selected = selectedProjectId ? projects.find((project) => project.id === selectedProjectId) : undefined;
   const project = accessibleProjects.find((item) => String(item._id) === selected?.id) ?? accessibleProjects[0];
-  if (!project) return { project: null, projects: [], sprints: [], sprint: null, tasks: [], backlogCount: 0, team: null };
+  if (!project) return { project: null, projects: [], sprints: [], sprint: null, tasks: [], backlogCount: 0, team: null, features: [] };
 
   const projectId = String(project._id);
   const projectRefs = objectIdOrString(projectId);
-  const storedSprints = await db.collection("sprints").find({ projectId: { $in: projectRefs } }).sort({ createdAt: -1 }).toArray();
+  const storedSprints = await db.collection("sprints").find({ projectId: { $in: projectRefs } }).sort({ order: 1, createdAt: -1 }).toArray();
   const sprints: Sprint[] = storedSprints.map((item) => ({
     id: String(item._id),
     name: text(item.name ?? item.title, "Untitled sprint"),
@@ -94,13 +100,17 @@ export async function getBoardData(userId: string, selectedProjectId?: string, s
     ?? null;
 
   const storedTasks = sprint
-    ? await db.collection("tasks").find({ projectId: { $in: projectRefs }, sprintId: { $in: objectIdOrString(sprint.id) } }).sort({ createdAt: -1 }).toArray()
+    ? await db.collection("tasks").find({ projectId: { $in: projectRefs }, sprintId: { $in: objectIdOrString(sprint.id) } }).sort({ order: 1, createdAt: -1 }).toArray()
     : [];
   const backlogCount = await db.collection("tasks").countDocuments({
     projectId: { $in: projectRefs },
     $or: [{ sprintId: null }, { sprintId: { $exists: false } }],
   });
-  const [counts, team] = await Promise.all([getTaskCounts(storedTasks.map((task) => task._id)), getProjectTeam(db, project, userId)]);
+  const [counts, team, features] = await Promise.all([
+    getTaskCounts(storedTasks.map((task) => task._id)),
+    getProjectTeam(db, project, userId),
+    listFeatures(db, project._id),
+  ]);
   const tasks = storedTasks.map((task, index) => mapTask(task, index, counts.get(String(task._id))));
 
   return {
@@ -116,6 +126,7 @@ export async function getBoardData(userId: string, selectedProjectId?: string, s
     tasks,
     backlogCount,
     team,
+    features,
   };
 }
 

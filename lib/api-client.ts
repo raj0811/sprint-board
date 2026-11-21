@@ -1,5 +1,5 @@
 // Small fetch wrapper for the JSON API routes. Never throws; failures come back as `error`.
-export async function send(url: string, method: "POST" | "PATCH" | "DELETE", body?: Record<string, unknown>): Promise<{ error?: string; id?: string }> {
+export async function send(url: string, method: "POST" | "PUT" | "PATCH" | "DELETE", body?: Record<string, unknown>): Promise<{ error?: string; id?: string }> {
   try {
     const response = await fetch(url, {
       method,

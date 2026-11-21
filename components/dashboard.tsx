@@ -3,22 +3,26 @@
 import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CreateDialog } from "@/components/dialogs/create-dialog";
+import { DeleteDialog } from "@/components/dialogs/delete-dialog";
 import { TeamDialog } from "@/components/dialogs/team-dialog";
+import { FeatureList } from "@/components/project/feature-list";
 import { ProjectOverview } from "@/components/project/project-overview";
 import { Sidebar } from "@/components/sidebar";
-import { SprintBoard, type StatusFilter } from "@/components/sprint/sprint-board";
+import { SprintBoard, type BoardColumns, type StatusFilter } from "@/components/sprint/sprint-board";
 import { Topbar } from "@/components/topbar";
 import { Icon } from "@/components/ui/icon";
 import type { BoardData, Sprint, Task, TaskStatus } from "@/lib/board-data";
 
 type DashboardProps = { board: BoardData; user: { id: string; name: string; email: string } };
-type DialogState = { type: "project" | "task" | "sprint"; task?: Task; sprint?: Sprint };
+type DialogState = { type: "project" | "task" | "sprint"; task?: Task; sprint?: Sprint; editProject?: boolean };
+type DeleteState = { kind: "project" } | { kind: "sprint"; sprint: Sprint };
 
 export function Dashboard({ board, user }: DashboardProps) {
   const router = useRouter();
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
+  const [deleting, setDeleting] = useState<DeleteState | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<StatusFilter>("All");
   const [actionError, setActionError] = useState("");
@@ -33,7 +37,7 @@ export function Dashboard({ board, user }: DashboardProps) {
   }
   const tasks = useMemo(() => board.tasks.map((task) => statusOverrides[task.id] ? { ...task, status: statusOverrides[task.id] } : task), [board.tasks, statusOverrides]);
 
-  async function mutate(url: string, method: "POST" | "PATCH" | "DELETE", body?: Record<string, string>): Promise<string | null> {
+  async function mutate(url: string, method: "POST" | "PUT" | "PATCH" | "DELETE", body?: Record<string, unknown>): Promise<string | null> {
     try {
       const response = await fetch(url, {
         method,
@@ -52,12 +56,15 @@ export function Dashboard({ board, user }: DashboardProps) {
     }
   }
 
-  async function createOrUpdateItem(title: string, description: string, startDate: string, deadline: string, sprintId?: string): Promise<string | null> {
+  async function createOrUpdateItem(title: string, description: string, startDate: string, deadline: string, extra?: { sprintId?: string; features?: string[] }): Promise<string | null> {
     if (!dialog) return "Close this form and try again.";
     let url: string;
     let method: "POST" | "PATCH" = "POST";
     if (dialog.type === "project") {
-      url = "/api/projects";
+      if (dialog.editProject && board.project) {
+        url = `/api/projects/${board.project.id}`;
+        method = "PATCH";
+      } else url = "/api/projects";
     } else if (dialog.type === "sprint") {
       if (!board.project) return "Create a project first.";
       if (dialog.sprint) {
@@ -78,7 +85,8 @@ export function Dashboard({ board, user }: DashboardProps) {
     }
     const body = {
       title, description, startDate, deadline,
-      ...(dialog.type === "task" && dialog.task && sprintId ? { sprintId } : {}),
+      ...(dialog.type === "task" && dialog.task && extra?.sprintId ? { sprintId: extra.sprintId } : {}),
+      ...(dialog.type === "project" && extra?.features?.length ? { features: extra.features } : {}),
       ...(dialog.type === "task" && !dialog.task && board.sprint ? { sprintId: board.sprint.id } : {}),
     };
     const result = await mutate(url, method, body);
@@ -100,6 +108,34 @@ export function Dashboard({ board, user }: DashboardProps) {
     }
   }
 
+  async function reorderTasks(columns: BoardColumns) {
+    if (!board.project || !board.sprint) return;
+    const error = await mutate(`/api/projects/${board.project.id}/tasks/order`, "PUT", { sprintId: board.sprint.id, columns });
+    if (error) {
+      setActionError(error);
+      router.refresh(); // put cards back where the server has them
+    }
+  }
+
+  async function confirmDelete(options: { moveTo?: string }): Promise<string | null> {
+    if (!deleting || !board.project) return "Nothing to delete.";
+    const projectId = board.project.id;
+    const url = deleting.kind === "project"
+      ? `/api/projects/${projectId}`
+      : `/api/projects/${projectId}/sprints/${deleting.sprint.id}${options.moveTo ? `?moveTo=${options.moveTo}` : ""}`;
+    try {
+      const response = await fetch(url, { method: "DELETE" });
+      const result = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) return result.error ?? "Unable to delete. Please try again.";
+    } catch {
+      return "Could not connect. Please try again.";
+    }
+    setDeleting(null);
+    if (deleting.kind === "project") router.replace("/");
+    else router.replace(`/?project=${projectId}${options.moveTo ? `&sprint=${options.moveTo}` : ""}`);
+    return null;
+  }
+
   async function deleteTask(task: Task) {
     if (!board.project || !window.confirm(`Delete “${task.title}”? This cannot be undone.`)) return;
     const error = await mutate(`/api/projects/${board.project.id}/tasks/${task.id}`, "DELETE");
@@ -113,8 +149,10 @@ export function Dashboard({ board, user }: DashboardProps) {
         <Topbar projectName={board.project?.name} onOpenMenu={() => setMenuOpen(true)} />
         <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 pb-28 pt-5 sm:px-6 sm:pb-10 lg:px-10 lg:pt-8">
           {board.project ? <>
-            <ProjectOverview project={board.project} team={board.team} onOpenTeam={() => setTeamOpen(true)} />
+            <ProjectOverview project={board.project} team={board.team} onOpenTeam={() => setTeamOpen(true)} onEdit={() => setDialog({ type: "project", editProject: true })} />
+            <FeatureList projectId={board.project.id} features={board.features} />
             <SprintBoard
+              projectId={board.project.id}
               tasks={tasks}
               backlogCount={board.backlogCount}
               sprint={board.sprint}
@@ -132,6 +170,8 @@ export function Dashboard({ board, user }: DashboardProps) {
               onCreateSprint={() => setDialog({ type: "sprint" })}
               onEditSprint={(sprint) => setDialog({ type: "sprint", sprint })}
               onSelectSprint={(sprintId) => router.replace(`/?project=${board.project!.id}&sprint=${sprintId}`)}
+              onReorderTasks={reorderTasks}
+              onError={setActionError}
             />
           </> : <section className="mx-auto mt-10 max-w-md rounded-2xl border border-line bg-surface px-6 py-14 text-center shadow-sm sm:mt-16">
             <span className="mx-auto grid size-12 place-items-center rounded-2xl bg-brand-50 text-brand-500"><Icon name="folder" size={22} /></span>
@@ -142,7 +182,16 @@ export function Dashboard({ board, user }: DashboardProps) {
         </main>
       </div>
       {teamOpen && board.project && board.team && <TeamDialog projectId={board.project.id} projectName={board.project.name} team={board.team} currentUserId={user.id} onClose={() => setTeamOpen(false)} />}
-      {dialog && <CreateDialog key={`${dialog.type}-${dialog.task?.id ?? dialog.sprint?.id ?? "new"}`} type={dialog.type} task={dialog.task} sprint={dialog.sprint} sprintOptions={board.sprints} currentSprintId={board.sprint?.id} projectName={board.project?.name ?? "Workspace"} onClose={() => setDialog(null)} onCreate={createOrUpdateItem} />}
+      {dialog && <CreateDialog key={`${dialog.type}-${dialog.task?.id ?? dialog.sprint?.id ?? (dialog.editProject ? "edit" : "new")}`} type={dialog.type} task={dialog.task} sprint={dialog.sprint}
+        project={dialog.editProject && board.project ? { name: board.project.name, description: board.project.description } : undefined}
+        sprintOptions={board.sprints} currentSprintId={board.sprint?.id} projectName={board.project?.name ?? "Workspace"}
+        onDelete={dialog.sprint ? () => { setDeleting({ kind: "sprint", sprint: dialog.sprint! }); setDialog(null); }
+          : dialog.editProject && board.team?.isOwner ? () => { setDeleting({ kind: "project" }); setDialog(null); } : undefined}
+        onClose={() => setDialog(null)} onCreate={createOrUpdateItem} />}
+      {deleting && board.project && <DeleteDialog kind={deleting.kind} name={deleting.kind === "project" ? board.project.name : deleting.sprint.name}
+        taskCount={deleting.kind === "sprint" && deleting.sprint.id === board.sprint?.id ? board.tasks.length : 0}
+        otherSprints={deleting.kind === "sprint" ? board.sprints.filter((item) => item.id !== deleting.sprint.id) : []}
+        onConfirm={confirmDelete} onClose={() => setDeleting(null)} />}
     </div>
   );
 }

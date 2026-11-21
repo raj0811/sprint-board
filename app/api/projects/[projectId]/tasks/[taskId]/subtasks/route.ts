@@ -14,7 +14,9 @@ export async function POST(request: Request, { params }: RouteContext) {
     if (!title) return NextResponse.json({ error: "Subtask title is required." }, { status: 400 });
     if (title.length > 300) return NextResponse.json({ error: "Keep the subtask title under 300 characters." }, { status: 400 });
     const now = new Date();
+    const last = await resolved.db.collection("subtasks").find({ taskId: resolved.task._id, order: { $type: "number" } }).sort({ order: -1 }).limit(1).next();
     const result = await resolved.db.collection("subtasks").insertOne({
+      order: typeof last?.order === "number" ? last.order + 1 : 0,
       projectId: resolved.project._id,
       taskId: resolved.task._id,
       title,

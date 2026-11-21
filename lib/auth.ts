@@ -2,6 +2,7 @@ import "server-only";
 import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import { cookies } from "next/headers";
+import { connection } from "next/server";
 import { redirect } from "next/navigation";
 import { ObjectId } from "mongodb";
 import { getDatabase } from "@/lib/mongodb";
@@ -52,6 +53,8 @@ export async function clearSession() {
 }
 
 export async function getCurrentUser() {
+  // Sessions are per request (and expiry uses the current time), so never prerender past this point.
+  await connection();
   const cookieStore = await cookies();
   const value = cookieStore.get(COOKIE_NAME)?.value;
   if (!value) return null;

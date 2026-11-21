@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import type { Task, TaskStatus } from "@/lib/board-data";
 import { Avatar } from "@/components/ui/avatar";
@@ -8,15 +9,26 @@ import { daysUntil, dueLabel, formatDate } from "@/lib/format";
 const priorityStyles = { High: "bg-danger-soft text-danger-ink", Medium: "", Low: "bg-success-soft text-success-ink" };
 const kindStyles = { Bug: "bg-warning-soft text-warning-ink", Story: "bg-brand-50 text-brand-700", Task: "" };
 
-type TaskCardProps = { task: Task; onStatusChange: (id: string, status: TaskStatus) => void; onEdit: (task: Task) => void; onDelete: (task: Task) => void };
+type TaskCardProps = {
+  task: Task;
+  onStatusChange: (id: string, status: TaskStatus) => void;
+  onEdit: (task: Task) => void;
+  onDelete: (task: Task) => void;
+  /** Drag handle shown before the title when the board can be reordered. */
+  handle?: ReactNode;
+  /** Visual state: the placeholder left behind while dragging, or the copy under the pointer. */
+  dragState?: "placeholder" | "overlay";
+};
 
-export function TaskCard({ task, onStatusChange, onEdit, onDelete }: TaskCardProps) {
+export function TaskCard({ task, onStatusChange, onEdit, onDelete, handle, dragState }: TaskCardProps) {
   const done = task.status === "Done";
   const days = task.deadline && !done ? daysUntil(task.deadline) : null;
   const dueTone = days === null ? "text-muted" : days < 0 ? "bg-danger-soft text-danger-ink" : days <= 2 ? "bg-warning-soft text-warning-ink" : "text-muted";
 
-  return <article className="group relative rounded-xl border border-line bg-surface p-3 shadow-[0_1px_2px_#1d1b290a] transition hover:border-line-strong hover:shadow-[0_4px_14px_#1d1b2912]">
+  const dragClass = dragState === "placeholder" ? "opacity-40" : dragState === "overlay" ? "rotate-1 cursor-grabbing border-brand-200 shadow-xl" : "";
+  return <article className={`group relative rounded-xl border border-line bg-surface p-3 shadow-[0_1px_2px_#1d1b290a] transition hover:border-line-strong hover:shadow-[0_4px_14px_#1d1b2912] ${dragClass}`}>
     <div className="flex items-start gap-1">
+      {handle && <span className="relative z-10 -my-1 -ml-1.5">{handle}</span>}
       <Link href={`/tasks/${task.id}`} className={`min-w-0 flex-1 rounded text-sm font-medium leading-snug outline-none after:absolute after:inset-0 after:rounded-xl focus-visible:ring-2 focus-visible:ring-brand-100 ${done ? "text-muted line-through decoration-faint" : "text-ink"}`}>{task.title}</Link>
       <div className="relative z-10 -mr-1 -mt-1 flex shrink-0 transition-opacity focus-within:opacity-100 can-hover:opacity-0 can-hover:group-hover:opacity-100">
         <button onClick={() => onEdit(task)} className="grid size-8 place-items-center rounded-lg text-faint hover:bg-canvas hover:text-ink" aria-label={`Edit ${task.title}`}><Icon name="edit" size={15} /></button>

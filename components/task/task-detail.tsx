@@ -3,10 +3,14 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { closestCenter, DndContext, type DragEndEvent } from "@dnd-kit/core";
+import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CreateDialog } from "@/components/dialogs/create-dialog";
 import { CanvasList } from "@/components/task/canvas-list";
 import { CommentThread } from "@/components/task/comment-thread";
 import { Icon } from "@/components/ui/icon";
+import { GripHandle, sortableStyle, useDragSensors } from "@/components/ui/sortable";
 import { StatusSelect } from "@/components/ui/status-select";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { send } from "@/lib/api-client";
@@ -37,7 +41,7 @@ export function TaskDetailView({ detail, user }: Props) {
   const taskComments = detail.comments.filter((comment) => !comment.subtaskId);
   const doneCount = subtasks.filter((subtask) => subtask.status === "Done").length;
 
-  async function run(url: string, method: "POST" | "PATCH" | "DELETE", body?: Record<string, string>) {
+  async function run(url: string, method: "POST" | "PUT" | "PATCH" | "DELETE", body?: Record<string, unknown>) {
     const result = await send(url, method, body);
     if (result.error) {
       setError(result.error);
@@ -135,6 +139,7 @@ export function TaskDetailView({ detail, user }: Props) {
           doneCount={doneCount}
           currentUserId={user.id}
           onAdd={(title) => run(`${base}/subtasks`, "POST", { title })}
+          onReorder={(ids) => run(`${base}/subtasks/order`, "PUT", { ids })}
           onRename={(subtask, title) => run(`${base}/subtasks/${subtask.id}`, "PATCH", { title })}
           onStatus={(subtask, status) => setStatus(subtask.id, `${base}/subtasks/${subtask.id}`, status)}
           onDelete={(subtask) => { if (window.confirm(`Delete subtask “${subtask.title}” and its comments?`)) void run(`${base}/subtasks/${subtask.id}`, "DELETE"); }}
@@ -169,6 +174,7 @@ type SubtaskListProps = {
   doneCount: number;
   currentUserId: string;
   onAdd: (title: string) => Promise<string | null>;
+  onReorder: (ids: string[]) => Promise<string | null>;
   onRename: (subtask: Subtask, title: string) => Promise<string | null>;
   onStatus: (subtask: Subtask, status: TaskStatus) => void;
   onDelete: (subtask: Subtask) => void;
@@ -176,9 +182,25 @@ type SubtaskListProps = {
   onDeleteComment: (comment: Comment) => void;
 };
 
-function SubtaskList({ subtasks, comments, doneCount, currentUserId, onAdd, onRename, onStatus, onDelete, onComment, onDeleteComment }: SubtaskListProps) {
+function SubtaskList({ subtasks: incoming, comments, doneCount, currentUserId, onAdd, onReorder, onRename, onStatus, onDelete, onComment, onDeleteComment }: SubtaskListProps) {
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
+  const sensors = useDragSensors();
+
+  // Local order after a drag, until fresh data arrives. Keyed on the server's id sequence
+  // (not the array object, which is rebuilt on every render by the optimistic status overlay).
+  const serverKey = incoming.map((subtask) => subtask.id).join();
+  const [order, setOrder] = useState<{ key: string; ids: string[] } | null>(null);
+  const byId = new Map(incoming.map((subtask) => [subtask.id, subtask]));
+  const subtasks = order && order.key === serverKey ? order.ids.flatMap((id) => byId.get(id) ?? []) : incoming;
+
+  async function onDragEnd({ active, over }: DragEndEvent) {
+    if (!over || active.id === over.id) return;
+    const ids = subtasks.map((subtask) => subtask.id);
+    const next = arrayMove(ids, ids.indexOf(String(active.id)), ids.indexOf(String(over.id)));
+    setOrder({ key: serverKey, ids: next });
+    if (await onReorder(next)) setOrder(null);
+  }
   const percent = subtasks.length ? Math.round((doneCount / subtasks.length) * 100) : 0;
 
   async function add(event: FormEvent) {
@@ -198,11 +220,15 @@ function SubtaskList({ subtasks, comments, doneCount, currentUserId, onAdd, onRe
       </>}
     </div>
 
-    {subtasks.length > 0 && <ul className="-mx-2 mb-3 grid">
-      {subtasks.map((subtask) => <SubtaskRow key={subtask.id} subtask={subtask} comments={comments.filter((comment) => comment.subtaskId === subtask.id)} currentUserId={currentUserId}
-        onRename={(value) => onRename(subtask, value)} onStatus={(status) => onStatus(subtask, status)} onDelete={() => onDelete(subtask)}
-        onComment={(body) => onComment(subtask, body)} onDeleteComment={onDeleteComment} />)}
-    </ul>}
+    {subtasks.length > 0 && <DndContext sensors={sensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis]} onDragEnd={onDragEnd}>
+      <SortableContext items={subtasks.map((subtask) => subtask.id)} strategy={verticalListSortingStrategy}>
+        <ul className="-mx-2 mb-3 grid">
+          {subtasks.map((subtask) => <SubtaskRow key={subtask.id} subtask={subtask} comments={comments.filter((comment) => comment.subtaskId === subtask.id)} currentUserId={currentUserId}
+            onRename={(value) => onRename(subtask, value)} onStatus={(status) => onStatus(subtask, status)} onDelete={() => onDelete(subtask)}
+            onComment={(body) => onComment(subtask, body)} onDeleteComment={onDeleteComment} />)}
+        </ul>
+      </SortableContext>
+    </DndContext>}
 
     <form onSubmit={add} className="flex gap-2">
       <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Add a subtask, e.g. Integrate shipment notification API" aria-label="New subtask title" className="h-11 min-w-0 flex-1 rounded-xl border border-dashed border-line-strong bg-surface px-3 text-base text-ink outline-none placeholder:text-faint focus:border-solid focus:border-brand-200 focus:ring-2 focus:ring-brand-100 sm:h-10 sm:text-sm" />
@@ -227,6 +253,7 @@ function SubtaskRow({ subtask, comments, currentUserId, onRename, onStatus, onDe
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(subtask.title);
   const done = subtask.status === "Done";
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: subtask.id });
 
   async function save() {
     const value = draft.trim();
@@ -235,8 +262,9 @@ function SubtaskRow({ subtask, comments, currentUserId, onRename, onStatus, onDe
     if (await onRename(value)) setDraft(subtask.title);
   }
 
-  return <li className="group/subtask rounded-xl px-2 hover:bg-canvas">
-    <div className="flex min-h-12 items-center gap-2 py-1.5">
+  return <li ref={setNodeRef} style={sortableStyle(transform, transition)} className={`group/subtask relative rounded-xl pl-0.5 pr-2 hover:bg-canvas ${isDragging ? "z-10 bg-surface shadow-lg ring-1 ring-line-strong" : ""}`}>
+    <div className="flex min-h-12 items-center gap-1.5 py-1.5">
+      <GripHandle label={`Reorder ${subtask.title}`} attributes={attributes} listeners={listeners} className="size-8" />
       <button onClick={() => onStatus(done ? "To do" : "Done")} className={`grid size-6 shrink-0 place-items-center rounded-full border-2 transition-colors ${done ? "border-success bg-success text-white" : subtask.status === "In progress" ? "border-brand-500 text-brand-500" : "border-line-strong text-transparent hover:border-success hover:text-success"}`} aria-label={done ? `Mark “${subtask.title}” as to do` : `Mark “${subtask.title}” as done`}>
         {subtask.status === "In progress" ? <i className="size-2 rounded-full bg-brand-500" /> : <Icon name="check" size={13} />}
       </button>
@@ -254,7 +282,7 @@ function SubtaskRow({ subtask, comments, currentUserId, onRename, onStatus, onDe
       </div>
     </div>
 
-    {open && <div className="mb-2 ml-8 border-l-2 border-line pb-2 pl-3 pt-1">
+    {open && <div className="mb-2 ml-[4.25rem] border-l-2 border-line pb-2 pl-3 pt-1">
       {/* On phones the status picker lives here to keep the row compact. */}
       <div className="mb-3 flex items-center gap-2 sm:hidden"><span className="text-xs text-muted">Status</span><StatusSelect size="sm" value={subtask.status} label={`Status for ${subtask.title}`} onChange={onStatus} /></div>
       <CommentThread compact comments={comments} currentUserId={currentUserId} placeholder="Comment on this subtask…" onPost={onComment} onDelete={onDeleteComment} />
