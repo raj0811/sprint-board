@@ -6,7 +6,7 @@ import { getDatabase } from "@/lib/mongodb";
 export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Please sign in to create a project." }, { status: 401 });
-
+  //try
   try {
     const body = await request.json() as { title?: string; description?: string };
     const title = body.title?.trim();
