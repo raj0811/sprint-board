@@ -1,5 +1,6 @@
 /* eslint-disable @next/next/no-img-element -- logos are imgbb thumbnails. */
 import { Avatar } from "@/components/ui/avatar";
+import { ExpandableText } from "@/components/ui/expandable-text";
 import { Icon } from "@/components/ui/icon";
 import { initialsOf } from "@/lib/format";
 import type { BoardData } from "@/lib/board-data";
@@ -18,7 +19,7 @@ export function ProjectOverview({ project, team, onOpenTeam, onEdit }: ProjectOv
         <h1 className="m-0 min-w-0 break-words text-2xl font-bold tracking-tight lg:text-[28px]">{project.name}</h1>
         <button onClick={onEdit} className="mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg text-muted hover:bg-surface hover:text-ink" aria-label="Edit project" title="Edit project"><Icon name="edit" size={17} /></button>
       </div>
-      {project.description && <p className="mt-1.5 max-w-3xl text-sm leading-relaxed text-muted">{project.description}</p>}
+      {project.description && <ExpandableText key={project.id} text={project.description} lines={4} className="mt-1.5 max-w-3xl text-sm leading-relaxed text-muted" />}
     </div>
     <button onClick={onOpenTeam} className="flex h-10 shrink-0 items-center gap-2 rounded-xl border border-line bg-surface pl-2 pr-3 text-sm font-medium text-ink-soft hover:border-line-strong" aria-label={`Team: ${members.length} ${members.length === 1 ? "member" : "members"}`}>
       {members.length > 1

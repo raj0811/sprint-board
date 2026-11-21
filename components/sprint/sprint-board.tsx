@@ -10,6 +10,7 @@ import { TaskCard } from "@/components/sprint/task-card";
 import { ColumnResizer } from "@/components/sprint/column-resizer";
 import { TaskTable } from "@/components/sprint/task-table";
 import { ImageGallery } from "@/components/ui/image-gallery";
+import { ExpandableText } from "@/components/ui/expandable-text";
 import { useStoredString } from "@/lib/use-stored-value";
 import { Icon } from "@/components/ui/icon";
 import { useDragSensors } from "@/components/ui/sortable";
@@ -258,7 +259,7 @@ function SprintHeader({ projectId, tasks, sprint, onEditSprint, onError }: Sprin
         <button onClick={() => onEditSprint(sprint)} className="grid size-9 place-items-center rounded-lg text-muted hover:bg-canvas hover:text-ink" aria-label="Edit sprint" title="Edit sprint"><Icon name="edit" size={17} /></button>
       </div>
     </div>
-    {sprint.description && <p className="mb-0 mt-3 text-sm leading-relaxed text-ink-soft">{sprint.description}</p>}
+    {sprint.description && <ExpandableText key={sprint.id} text={sprint.description} lines={3} className="mt-3 text-sm leading-relaxed text-ink-soft" />}
     <ImageGallery key={sprint.id} variant="strip" images={sprint.images} apiBase={`/api/projects/${projectId}/sprints/${sprint.id}/images`} onError={onError} />
     <div className="mt-4 flex items-center gap-3">
       <div className="h-2 flex-1 overflow-hidden rounded-full bg-line" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100} aria-label="Sprint progress"><div className="h-full rounded-full bg-gradient-to-r from-brand-500 to-[#9d84f5] transition-all duration-500" style={{ width: `${percent}%` }} /></div>
