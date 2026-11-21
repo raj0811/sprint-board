@@ -25,7 +25,10 @@ const paths: Record<string, string> = {
   mail: "M3 6h18v12H3zM3 7l9 6 9-6",
   canvas: "M4 5h16v11H4zM8 20l4-4 4 4M7.5 12.5l3-3 2 2 4-4",
   grip: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",
-  folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z",
+  image: "M4 4h16v16H4zM4 16l4.5-4.5 3.5 3.5 2.5-2.5L20 18M15.5 9.5a1.5 1.5 0 1 0 0-.01",
+  panelClose:"M4 4h16v16H4zM9 4v16M16 10l-2 2 2 2",
+  panelOpen: "M4 4h16v16H4zM9 4v16M14 10l2 2-2 2",
+  folder:"M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z",
 };
 
 export function Icon({ name, size = 18, className, strokeWidth = 1.8 }: { name: string; size?: number; className?: string; strokeWidth?: number }) {

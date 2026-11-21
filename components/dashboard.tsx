@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CreateDialog } from "@/components/dialogs/create-dialog";
+import { CreateDialog, type CreateExtra } from "@/components/dialogs/create-dialog";
 import { DeleteDialog } from "@/components/dialogs/delete-dialog";
 import { TeamDialog } from "@/components/dialogs/team-dialog";
 import { FeatureList } from "@/components/project/feature-list";
@@ -12,6 +12,9 @@ import { SprintBoard, type BoardColumns, type StatusFilter } from "@/components/
 import { Topbar } from "@/components/topbar";
 import { Icon } from "@/components/ui/icon";
 import type { BoardData, Sprint, Task, TaskStatus } from "@/lib/board-data";
+import { useStoredString } from "@/lib/use-stored-value";
+import { send } from "@/lib/api-client";
+import { uploadImages } from "@/lib/upload-client";
 
 type DashboardProps = { board: BoardData; user: { id: string; name: string; email: string } };
 type DialogState = { type: "project" | "task" | "sprint"; task?: Task; sprint?: Sprint; editProject?: boolean };
@@ -27,6 +30,21 @@ export function Dashboard({ board, user }: DashboardProps) {
   const [filter, setFilter] = useState<StatusFilter>("All");
   const [actionError, setActionError] = useState("");
   const closeMenu = useCallback(() => setMenuOpen(false), []);
+  const [collapsedPref, setCollapsedPref] = useStoredString("sidebar-collapsed");
+  const sidebarCollapsed = collapsedPref === "1";
+  const toggleSidebar = useCallback(() => setCollapsedPref(sidebarCollapsed ? null : "1"), [sidebarCollapsed, setCollapsedPref]);
+
+  // Ctrl/⌘+B collapses or expands the desktop sidebar.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        toggleSidebar();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleSidebar]);
 
   // Optimistic status changes: show the new column immediately, drop the overrides once fresh server data arrives.
   const [statusOverrides, setStatusOverrides] = useState<Record<string, TaskStatus>>({});
@@ -56,7 +74,7 @@ export function Dashboard({ board, user }: DashboardProps) {
     }
   }
 
-  async function createOrUpdateItem(title: string, description: string, startDate: string, deadline: string, extra?: { sprintId?: string; features?: string[] }): Promise<string | null> {
+  async function createOrUpdateItem(title: string, description: string, startDate: string, deadline: string, extra?: CreateExtra): Promise<string | null> {
     if (!dialog) return "Close this form and try again.";
     let url: string;
     let method: "POST" | "PATCH" = "POST";
@@ -89,9 +107,25 @@ export function Dashboard({ board, user }: DashboardProps) {
       ...(dialog.type === "project" && extra?.features?.length ? { features: extra.features } : {}),
       ...(dialog.type === "task" && !dialog.task && board.sprint ? { sprintId: board.sprint.id } : {}),
     };
-    const result = await mutate(url, method, body);
-    if (!result) setDialog(null);
-    return result;
+    const saved = await send(url, method, body);
+    if (saved.error) return saved.error;
+
+    // Then upload any logo / images, now that the item exists.
+    const id = method === "POST" ? saved.id : dialog.type === "project" ? board.project?.id : dialog.type === "sprint" ? dialog.sprint?.id : dialog.task?.id;
+    let uploadError: string | undefined;
+    if (id && dialog.type === "project" && extra?.logo) {
+      const logoUrl = `/api/projects/${id}/logo`;
+      uploadError = (extra.logo === "remove" ? await send(logoUrl, "DELETE") : await uploadImages(logoUrl, [extra.logo])).error;
+    } else if (id && dialog.type !== "project" && extra?.images?.length && board.project) {
+      uploadError = (await uploadImages(`/api/projects/${board.project.id}/${dialog.type === "sprint" ? "sprints" : "tasks"}/${id}/images`, extra.images)).error;
+    }
+
+    if (url === "/api/projects" && saved.id) router.replace(`/?project=${saved.id}`);
+    else if (url.endsWith("/sprints") && saved.id && board.project) router.replace(`/?project=${board.project.id}&sprint=${saved.id}`);
+    else router.refresh();
+    setActionError(uploadError ? `Saved, but the ${dialog.type === "project" ? "logo" : "images"} couldn't be uploaded: ${uploadError}` : "");
+    setDialog(null);
+    return null;
   }
 
   async function moveTask(taskId: string, status: TaskStatus) {
@@ -144,7 +178,7 @@ export function Dashboard({ board, user }: DashboardProps) {
 
   return (
     <div className="flex min-h-screen bg-canvas text-ink">
-      <Sidebar projects={board.projects} selectedProjectId={board.project?.id} userName={user.name || user.email} userEmail={user.email} open={menuOpen} onClose={closeMenu} onAddProject={() => setDialog({ type: "project" })} />
+      <Sidebar projects={board.projects} selectedProjectId={board.project?.id} userName={user.name || user.email} userEmail={user.email} open={menuOpen} onClose={closeMenu} onAddProject={() => setDialog({ type: "project" })} collapsed={sidebarCollapsed} onToggleCollapsed={toggleSidebar} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar projectName={board.project?.name} onOpenMenu={() => setMenuOpen(true)} />
         <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 pb-28 pt-5 sm:px-6 sm:pb-10 lg:px-10 lg:pt-8">
@@ -183,7 +217,7 @@ export function Dashboard({ board, user }: DashboardProps) {
       </div>
       {teamOpen && board.project && board.team && <TeamDialog projectId={board.project.id} projectName={board.project.name} team={board.team} currentUserId={user.id} onClose={() => setTeamOpen(false)} />}
       {dialog && <CreateDialog key={`${dialog.type}-${dialog.task?.id ?? dialog.sprint?.id ?? (dialog.editProject ? "edit" : "new")}`} type={dialog.type} task={dialog.task} sprint={dialog.sprint}
-        project={dialog.editProject && board.project ? { name: board.project.name, description: board.project.description } : undefined}
+        project={dialog.editProject && board.project ? { name: board.project.name, description: board.project.description, logo: board.project.logo } : undefined}
         sprintOptions={board.sprints} currentSprintId={board.sprint?.id} projectName={board.project?.name ?? "Workspace"}
         onDelete={dialog.sprint ? () => { setDeleting({ kind: "sprint", sprint: dialog.sprint! }); setDialog(null); }
           : dialog.editProject && board.team?.isOwner ? () => { setDeleting({ kind: "project" }); setDialog(null); } : undefined}

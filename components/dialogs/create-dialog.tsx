@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+/* eslint-disable @next/next/no-img-element -- local previews (blob: URLs) and imgbb thumbnails. */
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Icon } from "@/components/ui/icon";
 import type { Sprint, Task } from "@/lib/board-data";
+import { ACCEPTED_IMAGE_TYPES, MAX_IMAGES_PER_ITEM, type ImageAttachment } from "@/lib/images";
+import { checkImageFiles } from "@/lib/upload-client";
 
 type CreateDialogProps = {
   type: "project" | "task" | "sprint";
@@ -13,11 +16,20 @@ type CreateDialogProps = {
   sprintOptions?: { id: string; name: string; status: string }[];
   currentSprintId?: string;
   /** When editing a project: its current values. */
-  project?: { name: string; description: string };
+  project?: { name: string; description: string; logo?: ImageAttachment | null };
   /** Shows a "Delete …" button in the footer (e.g. when editing a sprint or project). */
   onDelete?: () => void;
   onClose: () => void;
-  onCreate: (title: string, description: string, startDate: string, deadline: string, extra?: { sprintId?: string; features?: string[] }) => Promise<string | null>;
+  onCreate: (title: string, description: string, startDate: string, deadline: string, extra?: CreateExtra) => Promise<string | null>;
+};
+
+export type CreateExtra = {
+  sprintId?: string;
+  features?: string[];
+  /** Project only: a new logo file, or "remove" to clear the current one. */
+  logo?: File | "remove";
+  /** Task or sprint: images to attach once it's saved. */
+  images?: File[];
 };
 
 // 16px text on phones prevents iOS from zooming into focused inputs.
@@ -32,6 +44,9 @@ export function CreateDialog({ type, projectName, task, sprint, project, sprintO
   const [sprintId, setSprintId] = useState(currentSprintId ?? "");
   const [features, setFeatures] = useState<string[]>([]);
   const [featureDraft, setFeatureDraft] = useState("");
+  const [logo, setLogo] = useState<PickedFile | "remove" | null>(null);
+  const [images, setImages] = useState<PickedFile[]>([]);
+  const [fileError, setFileError] = useState("");
 
   function addFeature() {
     const value = featureDraft.trim();
@@ -65,6 +80,8 @@ export function CreateDialog({ type, projectName, task, sprint, project, sprintO
       sprintId: sprintId && sprintId !== currentSprintId ? sprintId : undefined,
       // Include anything still typed in the feature box.
       features: type === "project" && !project ? [...features, featureDraft].map((item) => item.trim()).filter(Boolean) : undefined,
+      logo: type === "project" && logo ? (logo === "remove" ? logo : logo.file) : undefined,
+      images: type !== "project" && images.length ? images.map((item) => item.file) : undefined,
     });
     if (message) setError(message);
     setBusy(false);
@@ -88,6 +105,8 @@ export function CreateDialog({ type, projectName, task, sprint, project, sprintO
         <label htmlFor="item-description" className={labelClass}>Description</label>
         <textarea id="item-description" rows={3} required value={description} onChange={(event) => setDescription(event.target.value)} placeholder={`Describe this ${type}…`} className={`${fieldClass} resize-y py-2.5 leading-relaxed`} />
       </div>
+
+      {type === "project" && <LogoField current={project?.logo ?? null} value={logo} onChange={(next) => { setFileError(""); setLogo(next); }} onError={setFileError} />}
 
       {type !== "project" && <div className="mt-4 grid grid-cols-2 gap-3">
         <div className="min-w-0"><label htmlFor="start-date" className={labelClass}>Start date</label><input id="start-date" type="date" value={startDate} max={deadline || undefined} onChange={(event) => setStartDate(event.target.value)} className={`${fieldClass} h-11 min-w-0`} /></div>
@@ -121,13 +140,89 @@ export function CreateDialog({ type, projectName, task, sprint, project, sprintO
         {sprintId !== currentSprintId && <p className="mb-0 mt-1.5 text-xs text-muted">The task will move to this sprint when you save.</p>}
       </div>}
 
-      {error && <p role="alert" className="mb-0 mt-4 rounded-xl bg-danger-soft px-3 py-2.5 text-sm text-danger-ink">{error}</p>}
+      {type !== "project" && <ImagesField label={editing ? "Attach more images" : "Images"} files={images} onChange={(next) => { setFileError(""); setImages(next); }} onError={setFileError} />}
+
+      {(error || fileError) && <p role="alert" className="mb-0 mt-4 rounded-xl bg-danger-soft px-3 py-2.5 text-sm text-danger-ink">{fileError || error}</p>}
 
       <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         {onDelete && <button type="button" disabled={busy} onClick={onDelete} className="flex h-11 items-center justify-center gap-1.5 rounded-xl px-3 text-sm font-semibold text-danger-ink hover:bg-danger-soft sm:mr-auto sm:h-10"><Icon name="trash" size={16} />Delete {type}</button>}
         <button type="button" disabled={busy} onClick={onClose} className="h-11 rounded-xl border border-line bg-surface px-4 text-sm font-semibold text-ink-soft hover:bg-canvas sm:h-10">Cancel</button>
-        <button type="submit" disabled={busy} className="h-11 rounded-xl bg-brand-500 px-5 text-sm font-semibold text-white shadow-sm shadow-brand-500/30 hover:bg-brand-600 disabled:cursor-wait disabled:opacity-60 sm:h-10">{busy ? "Saving…" : editing ? "Save changes" : `Create ${type}`}</button>
+        <button type="submit" disabled={busy} className="h-11 rounded-xl bg-brand-500 px-5 text-sm font-semibold text-white shadow-sm shadow-brand-500/30 hover:bg-brand-600 disabled:cursor-wait disabled:opacity-60 sm:h-10">{busy ? ((logo && logo !== "remove") || images.length ? "Uploading…" : "Saving…") : editing ? "Save changes" : `Create ${type}`}</button>
       </div>
     </form>
+  </div>;
+}
+
+/** A chosen file plus a blob: URL for its preview (created when picked, revoked when dropped). */
+type PickedFile = { file: File; url: string };
+
+const pick = (file: File): PickedFile => ({ file, url: URL.createObjectURL(file) });
+
+function LogoField({ current, value, onChange, onError }: { current: ImageAttachment | null; value: PickedFile | "remove" | null; onChange: (next: PickedFile | "remove" | null) => void; onError: (message: string) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const preview = value === "remove" ? null : value?.url ?? current?.thumbUrl ?? null;
+
+  function choose(file: File | undefined) {
+    if (!file) return;
+    const problem = checkImageFiles([file]);
+    if (problem) return onError(problem);
+    if (value && value !== "remove") URL.revokeObjectURL(value.url);
+    onChange(pick(file));
+  }
+
+  function clear() {
+    if (value && value !== "remove") URL.revokeObjectURL(value.url);
+    onChange(current ? "remove" : null);
+  }
+
+  return <div className="mt-4">
+    <span className={labelClass}>Logo <span className="font-normal text-faint">(optional)</span></span>
+    <div className="flex items-center gap-3">
+      <button type="button" onClick={() => inputRef.current?.click()} className="grid size-14 shrink-0 place-items-center overflow-hidden rounded-xl border border-dashed border-line-strong bg-sunken text-faint hover:border-brand-200 hover:text-brand-600" aria-label={preview ? "Change logo" : "Choose a logo"}>
+        {preview ? <img src={preview} alt="" className="size-full object-cover" /> : <Icon name="image" size={22} />}
+      </button>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <button type="button" onClick={() => inputRef.current?.click()} className="h-9 rounded-lg border border-line px-3 text-sm font-medium text-ink-soft hover:bg-canvas">{preview ? "Change" : "Upload logo"}</button>
+        {preview && <button type="button" onClick={clear} className="h-9 rounded-lg px-3 text-sm font-medium text-danger-ink hover:bg-danger-soft">Remove</button>}
+        {value === "remove" && <button type="button" onClick={() => onChange(null)} className="h-9 rounded-lg px-3 text-sm font-medium text-muted hover:bg-canvas">Undo</button>}
+        <span className="w-full text-xs text-muted">{value === "remove" ? "The logo will be removed when you save." : "Square images work best. PNG, JPG, GIF or WebP, up to 10 MB."}</span>
+      </div>
+    </div>
+    <input ref={inputRef} type="file" accept={ACCEPTED_IMAGE_TYPES.join(",")} hidden onChange={(event) => { choose(event.target.files?.[0]); event.target.value = ""; }} />
+  </div>;
+}
+
+function ImagesField({ label, files, onChange, onError }: { label: string; files: PickedFile[]; onChange: (next: PickedFile[]) => void; onError: (message: string) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function add(list: FileList | null) {
+    const chosen = Array.from(list ?? []);
+    if (!chosen.length) return;
+    const problem = checkImageFiles(chosen);
+    if (problem) return onError(problem);
+    const room = MAX_IMAGES_PER_ITEM - files.length;
+    if (chosen.length > room) onError(`Only the first ${room} images were added (up to ${MAX_IMAGES_PER_ITEM} per item).`);
+    onChange([...files, ...chosen.slice(0, Math.max(room, 0)).map(pick)]);
+  }
+
+  function remove(index: number) {
+    URL.revokeObjectURL(files[index].url);
+    onChange(files.filter((_, position) => position !== index));
+  }
+
+  return <div className="mt-4">
+    <span className={labelClass}>{label} <span className="font-normal text-faint">(optional)</span></span>
+    <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
+      {files.map((item, index) => <li key={item.url} className="group relative size-16">
+        <img src={item.url} alt={item.file.name} title={item.file.name} className="size-full rounded-xl border border-line object-cover" />
+        <button type="button" onClick={() => remove(index)} className="absolute -right-1.5 -top-1.5 grid size-6 place-items-center rounded-full bg-ink text-surface shadow hover:bg-danger-ink" aria-label={`Remove ${item.file.name}`}><Icon name="close" size={12} /></button>
+      </li>)}
+      {files.length < MAX_IMAGES_PER_ITEM && <li className="size-16">
+        <button type="button" onClick={() => inputRef.current?.click()} className="grid size-full place-items-center rounded-xl border border-dashed border-line-strong text-muted hover:border-brand-200 hover:text-brand-600" aria-label="Choose images">
+          <span className="grid justify-items-center gap-0.5 text-[10px] font-medium"><Icon name="plus" size={18} />Add</span>
+        </button>
+      </li>}
+    </ul>
+    <input ref={inputRef} type="file" accept={ACCEPTED_IMAGE_TYPES.join(",")} multiple hidden onChange={(event) => { add(event.target.files); event.target.value = ""; }} />
   </div>;
 }

@@ -3,6 +3,7 @@ import { ObjectId, type Document } from "mongodb";
 import { getDatabase } from "@/lib/mongodb";
 import { getProjectTeam, ownerIdOf, type Team } from "@/lib/team";
 import { listFeatures, type Feature } from "@/lib/features";
+import { toAttachment, toAttachments, type ImageAttachment } from "@/lib/images";
 
 export type TaskStatus = "To do" | "In progress" | "Done";
 export type Task = {
@@ -21,10 +22,11 @@ export type Task = {
   subtaskTotal: number;
   subtaskDone: number;
   commentCount: number;
+  images: ImageAttachment[];
 };
 /** `shared` is true when someone else owns the project and the user is a team member. */
-export type ProjectOption = { id: string; name: string; shared: boolean };
-export type Sprint = { id: string; name: string; description: string; status: string; startDate: string; deadline: string };
+export type ProjectOption = { id: string; name: string; shared: boolean; logo: ImageAttachment | null };
+export type Sprint = { id: string; name: string; description: string; status: string; startDate: string; deadline: string; images: ImageAttachment[] };
 export type BoardData = {
   project: (ProjectOption & { description: string }) | null;
   projects: ProjectOption[];
@@ -78,6 +80,7 @@ export async function getBoardData(userId: string, selectedProjectId?: string, s
     id: String(project._id),
     name: text(project.name ?? project.title, "Untitled project"),
     shared: ownerIdOf(project) !== userId,
+    logo: toAttachment(project.logo),
   }));
   const selected = selectedProjectId ? projects.find((project) => project.id === selectedProjectId) : undefined;
   const project = accessibleProjects.find((item) => String(item._id) === selected?.id) ?? accessibleProjects[0];
@@ -93,6 +96,7 @@ export async function getBoardData(userId: string, selectedProjectId?: string, s
     status: text(item.status, "planned"),
     startDate: dateText(item.startDate),
     deadline: dateText(item.deadline ?? item.endDate),
+    images: toAttachments(item.images),
   }));
   const sprint = sprints.find((item) => item.id === selectedSprintId)
     ?? sprints.find((item) => ["active", "in progress"].includes(item.status.toLowerCase()))
@@ -119,6 +123,7 @@ export async function getBoardData(userId: string, selectedProjectId?: string, s
       id: projectId,
       name: text(project.name ?? project.title, "Untitled project"),
       shared: ownerIdOf(project) !== userId,
+      logo: toAttachment(project.logo),
       description: text(project.description),
     },
     sprints,
@@ -177,5 +182,6 @@ export function mapTask(task: Document, index: number, counts?: TaskCounts): Tas
     subtaskTotal: counts?.subtaskTotal ?? 0,
     subtaskDone: counts?.subtaskDone ?? 0,
     commentCount: counts?.commentCount ?? 0,
+    images: toAttachments(task.images),
   };
 }

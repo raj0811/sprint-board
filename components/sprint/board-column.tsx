@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import type { Task, TaskStatus } from "@/lib/board-data";
@@ -25,16 +26,17 @@ type BoardColumnProps = CardActions & {
   /** When true, cards can be dragged within and between columns. */
   sortable?: boolean;
   className?: string;
+  style?: CSSProperties;
   onCreateTask: () => void;
 };
 
-export function BoardColumn({ status, tasks, wide, sortable = false, className = "", onStatusChange, onEditTask, onDeleteTask, onCreateTask }: BoardColumnProps) {
+export function BoardColumn({ status, tasks, wide, sortable = false, className = "", style, onStatusChange, onEditTask, onDeleteTask, onCreateTask }: BoardColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: columnDropId(status), disabled: !sortable });
   // New tasks always start in "To do", so only that column offers an inline add button.
   const canAdd = status === "To do";
   const actions = { onStatusChange, onEditTask, onDeleteTask };
 
-  return <section aria-label={status} className={`flex min-w-0 flex-col rounded-2xl bg-sunken p-2 transition-colors ${isOver ? "ring-2 ring-brand-200" : ""} ${className}`}>
+  return <section aria-label={status} style={style} className={`flex min-w-0 flex-col rounded-2xl bg-sunken p-2 transition-colors ${isOver ? "ring-2 ring-brand-200" : ""} ${className}`}>
     <header className="flex h-9 items-center gap-2 px-2">
       <span className={`size-2 rounded-full ${statusDots[status]}`} />
       <h3 className="m-0 text-[13px] font-semibold text-ink-soft">{status}</h3>

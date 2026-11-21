@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, type CSSProperties } from "react";
 import { closestCorners, DndContext, DragOverlay, type DragEndEvent, type DragOverEvent, type DragStartEvent } from "@dnd-kit/core";
 import { arrayMove } from "@dnd-kit/sortable";
 import type { Sprint, Task, TaskStatus } from "@/lib/board-data";
 import { BoardColumn, statusDots } from "@/components/sprint/board-column";
 import { SprintTabs } from "@/components/sprint/sprint-tabs";
 import { TaskCard } from "@/components/sprint/task-card";
+import { ColumnResizer } from "@/components/sprint/column-resizer";
+import { TaskTable } from "@/components/sprint/task-table";
+import { ImageGallery } from "@/components/ui/image-gallery";
+import { useStoredString } from "@/lib/use-stored-value";
 import { Icon } from "@/components/ui/icon";
 import { useDragSensors } from "@/components/ui/sortable";
 import { daysUntil, formatDate } from "@/lib/format";
@@ -39,6 +43,29 @@ type SprintBoardProps = {
   onError: (message: string) => void;
 };
 
+const EQUAL_WIDTHS = [100 / 3, 100 / 3, 100 / 3];
+const MIN_COLUMN_WIDTH = 15;
+
+/** Saved widths, or equal thirds when nothing (or something invalid) is stored. */
+function parseWidths(raw: string | null): number[] {
+  if (!raw) return EQUAL_WIDTHS;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (Array.isArray(value) && value.length === statuses.length && value.every((width) => typeof width === "number" && width >= MIN_COLUMN_WIDTH)) return value;
+  } catch { /* fall through */ }
+  return EQUAL_WIDTHS;
+}
+
+/** Moves the border before column `index` by `delta` percent; only its two neighbours change size. */
+function resizeColumns(base: number[], index: number, delta: number): number[] {
+  const pair = base[index - 1] + base[index];
+  const left = Math.min(Math.max(base[index - 1] + delta, MIN_COLUMN_WIDTH), pair - MIN_COLUMN_WIDTH);
+  const next = [...base];
+  next[index - 1] = left;
+  next[index] = pair - left;
+  return next;
+}
+
 function columnsFrom(tasks: Task[]): BoardColumns {
   return { "To do": tasks.filter((task) => task.status === "To do").map((task) => task.id), "In progress": tasks.filter((task) => task.status === "In progress").map((task) => task.id), Done: tasks.filter((task) => task.status === "Done").map((task) => task.id) };
 }
@@ -57,6 +84,13 @@ export function SprintBoard(props: SprintBoardProps) {
   }
   const [activeId, setActiveId] = useState<string | null>(null);
   const dragStart = useRef<BoardColumns | null>(null);
+
+  // Column widths (percentages) are saved per browser; while a border is being dragged the live widths win.
+  const [storedWidths, setStoredWidths] = useStoredString("board-column-widths");
+  const [liveWidths, setLiveWidths] = useState<number[] | null>(null);
+  const resizeStart = useRef<number[] | null>(null);
+  const widths = liveWidths ?? parseWidths(storedWidths);
+  const saveWidths = (next: number[]) => setStoredWidths(JSON.stringify(next.map((width) => Math.round(width * 10) / 10)));
 
   // Ctrl/⌘+K focuses search.
   useEffect(() => {
@@ -84,7 +118,6 @@ export function SprintBoard(props: SprintBoardProps) {
   const needle = query.trim().toLowerCase();
   const matching = needle ? tasks.filter((task) => `${task.title} ${task.description} ${task.key} ${task.assignee}`.toLowerCase().includes(needle)) : tasks;
   const counts = Object.fromEntries(statuses.map((status) => [status, matching.filter((task) => task.status === status).length])) as Record<TaskStatus, number>;
-  const shownStatuses = filter === "All" ? statuses : [filter];
   const columnProps = { onStatusChange: props.onStatusChange, onEditTask: props.onEditTask, onDeleteTask: props.onDeleteTask, onCreateTask };
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   // Dragging only makes sense with the full board visible.
@@ -168,11 +201,25 @@ export function SprintBoard(props: SprintBoardProps) {
     {needle && matching.length === 0 ? <p className="rounded-2xl border border-dashed border-line bg-surface py-12 text-center text-sm text-muted">No tasks match “{query.trim()}”.</p>
       : <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd} onDragCancel={onDragCancel}>
         {filter === "All"
-          // Phones: swipeable columns (snap is off while dragging so the board can auto-scroll). Tablet and up: three-column grid.
-          ? <div className={`no-scrollbar -mx-4 flex scroll-px-4 gap-3 overflow-x-auto px-4 pb-2 sm:-mx-6 sm:scroll-px-6 sm:px-6 md:mx-0 md:grid md:grid-cols-3 md:overflow-visible md:px-0 lg:gap-5 ${activeId ? "" : "snap-x snap-mandatory"}`}>
-            {shownStatuses.map((status) => <BoardColumn key={status} status={status} sortable={canDrag} tasks={canDrag ? columnTasks(status) : matching.filter((task) => task.status === status)} className="w-[85%] shrink-0 snap-start sm:w-[60%] md:w-auto" {...columnProps} />)}
+          // Phones: swipeable columns (snap is off while dragging so the board can auto-scroll).
+          // Tablet and up: three columns whose widths are set by dragging the borders between them.
+          ? <div className={`no-scrollbar -mx-4 flex scroll-px-4 gap-3 overflow-x-auto px-4 pb-2 sm:-mx-6 sm:scroll-px-6 sm:px-6 md:mx-0 md:gap-0 md:overflow-visible md:px-0 ${activeId ? "" : "snap-x snap-mandatory"}`}>
+            {statuses.map((status, index) => <Fragment key={status}>
+              {index > 0 && <ColumnResizer
+                label={`Resize ${statuses[index - 1]} and ${status} columns`}
+                value={widths[index - 1]}
+                onStart={() => { resizeStart.current = widths; }}
+                onMove={(delta) => { if (resizeStart.current) setLiveWidths(resizeColumns(resizeStart.current, index, delta)); }}
+                onEnd={() => { if (liveWidths) saveWidths(liveWidths); resizeStart.current = null; setLiveWidths(null); }}
+                onStep={(delta) => saveWidths(resizeColumns(widths, index, delta))}
+                onReset={() => setStoredWidths(null)}
+              />}
+              <BoardColumn status={status} sortable={canDrag} tasks={canDrag ? columnTasks(status) : matching.filter((task) => task.status === status)}
+                style={{ "--col-grow": widths[index] } as CSSProperties}
+                className="w-[85%] shrink-0 snap-start sm:w-[60%] md:w-auto md:shrink md:[flex:var(--col-grow)_1_0%]" {...columnProps} />
+            </Fragment>)}
           </div>
-          : <BoardColumn status={filter} tasks={matching.filter((task) => task.status === filter)} wide {...columnProps} />}
+          : <TaskTable status={filter} tasks={matching.filter((task) => task.status === filter)} {...columnProps} />}
         <DragOverlay dropAnimation={{ duration: 180, easing: "ease-out" }}>
           {activeTask && <TaskCard task={activeTask} onStatusChange={() => {}} onEdit={() => {}} onDelete={() => {}} dragState="overlay" />}
         </DragOverlay>
@@ -186,7 +233,7 @@ export function SprintBoard(props: SprintBoardProps) {
   </section>;
 }
 
-function SprintHeader({ tasks, sprint, onEditSprint }: SprintBoardProps) {
+function SprintHeader({ projectId, tasks, sprint, onEditSprint, onError }: SprintBoardProps) {
   if (!sprint) return null;
   const active = sprint.status.toLowerCase() === "active";
   const done = tasks.filter((task) => task.status === "Done").length;
@@ -212,6 +259,7 @@ function SprintHeader({ tasks, sprint, onEditSprint }: SprintBoardProps) {
       </div>
     </div>
     {sprint.description && <p className="mb-0 mt-3 text-sm leading-relaxed text-ink-soft">{sprint.description}</p>}
+    <ImageGallery key={sprint.id} variant="strip" images={sprint.images} apiBase={`/api/projects/${projectId}/sprints/${sprint.id}/images`} onError={onError} />
     <div className="mt-4 flex items-center gap-3">
       <div className="h-2 flex-1 overflow-hidden rounded-full bg-line" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100} aria-label="Sprint progress"><div className="h-full rounded-full bg-gradient-to-r from-brand-500 to-[#9d84f5] transition-all duration-500" style={{ width: `${percent}%` }} /></div>
       <span className="shrink-0 text-[13px] text-muted"><strong className="font-semibold text-ink">{done}</strong>/{tasks.length} done · {percent}%</span>

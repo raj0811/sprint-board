@@ -6,8 +6,8 @@ import { Icon } from "@/components/ui/icon";
 import { StatusSelect } from "@/components/ui/status-select";
 import { daysUntil, dueLabel, formatDate } from "@/lib/format";
 
-const priorityStyles = { High: "bg-danger-soft text-danger-ink", Medium: "", Low: "bg-success-soft text-success-ink" };
-const kindStyles = { Bug: "bg-warning-soft text-warning-ink", Story: "bg-brand-50 text-brand-700", Task: "" };
+export const priorityStyles = { High: "bg-danger-soft text-danger-ink", Medium: "", Low: "bg-success-soft text-success-ink" };
+export const kindStyles ={ Bug: "bg-warning-soft text-warning-ink", Story: "bg-brand-50 text-brand-700", Task: "" };
 
 type TaskCardProps = {
   task: Task;
@@ -47,6 +47,7 @@ export function TaskCard({ task, onStatusChange, onEdit, onDelete, handle, dragS
       {!task.deadline && task.startDate && <span className="flex items-center gap-1 text-[11px] text-muted"><Icon name="calendar" size={12} />Starts {formatDate(task.startDate)}</span>}
       {task.subtaskTotal > 0 && <span title="Subtasks done" className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium ${task.subtaskDone === task.subtaskTotal ? "bg-success-soft text-success-ink" : "text-muted"}`}><Icon name="subtask" size={12} />{task.subtaskDone}/{task.subtaskTotal}</span>}
       {task.commentCount > 0 && <span title="Comments" className="flex items-center gap-1 text-[11px] font-medium text-muted"><Icon name="chat" size={12} />{task.commentCount}</span>}
+      {task.images.length > 0 && <span title="Images" className="flex items-center gap-1 text-[11px] font-medium text-muted"><Icon name="image" size={12} />{task.images.length}</span>}
       <span className="relative z-10 ml-auto flex items-center gap-1.5">
         {task.assignee !== "Unassigned" && <span title={task.assignee}><Avatar initials={task.initials} color={task.color} size="sm" /></span>}
         <StatusSelect value={task.status} label={`Status for ${task.title}`} onChange={(status) => onStatusChange(task.id, status)} />

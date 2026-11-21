@@ -8,6 +8,8 @@ import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CreateDialog } from "@/components/dialogs/create-dialog";
 import { CanvasList } from "@/components/task/canvas-list";
+import { ImageGallery } from "@/components/ui/image-gallery";
+import { uploadImages } from "@/lib/upload-client";
 import { CommentThread } from "@/components/task/comment-thread";
 import { Icon } from "@/components/ui/icon";
 import { GripHandle, sortableStyle, useDragSensors } from "@/components/ui/sortable";
@@ -147,6 +149,8 @@ export function TaskDetailView({ detail, user }: Props) {
           onDeleteComment={deleteComment}
         />
 
+        <ImageGallery images={task.images} apiBase={`${base}/images`} onError={setError} />
+
         <CanvasList canvases={detail.canvases} apiBase={base} onError={setError} />
 
         <section className="rounded-2xl border border-line bg-surface p-4 shadow-sm sm:p-5">
@@ -156,10 +160,16 @@ export function TaskDetailView({ detail, user }: Props) {
       </div>
     </main>
 
-    {editing && <CreateDialog type="task" task={task} projectName={project.name} onClose={() => setEditing(false)} onCreate={async (title, description, startDate, deadline) => {
+    {editing && <CreateDialog type="task" task={task} projectName={project.name} onClose={() => setEditing(false)} onCreate={async (title, description, startDate, deadline, extra) => {
       const message = await run(base, "PATCH", { title, description, startDate, deadline });
-      if (!message) setEditing(false);
-      return message;
+      if (message) return message;
+      if (extra?.images?.length) {
+        const upload = await uploadImages(`${base}/images`, extra.images);
+        if (upload.error) setError(`Saved, but the images couldn't be uploaded: ${upload.error}`);
+        router.refresh();
+      }
+      setEditing(false);
+      return null;
     }} />}
   </div>;
 }

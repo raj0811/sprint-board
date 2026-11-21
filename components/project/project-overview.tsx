@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element -- logos are imgbb thumbnails. */
 import { Avatar } from "@/components/ui/avatar";
 import { Icon } from "@/components/ui/icon";
 import { initialsOf } from "@/lib/format";
@@ -10,6 +11,7 @@ type ProjectOverviewProps = { project: NonNullable<BoardData["project"]>; team: 
 export function ProjectOverview({ project, team, onOpenTeam, onEdit }: ProjectOverviewProps) {
   const members = team?.members ?? [];
   return <section className="mb-5 flex flex-wrap items-start gap-x-4 gap-y-3 lg:mb-7">
+    {project.logo && <img src={project.logo.thumbUrl} alt={`${project.name} logo`} className="size-14 shrink-0 rounded-2xl border border-line bg-surface object-cover lg:size-16" />}
     <div className="min-w-0 flex-1">
       <p className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-faint">Project{project.shared && <span className="rounded bg-brand-50 px-1.5 py-px normal-case tracking-normal text-brand-700">Shared with you</span>}</p>
       <div className="flex items-start gap-1">
