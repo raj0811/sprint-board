@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+/* Only devices with a real pointer get hover-to-reveal controls; touch devices always see them. */
+@custom-variant can-hover (@media (hover: hover) and (pointer: fine));
+/* Theme is driven by the `dark` class on <html> (default), not the OS setting. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+  Semantic colour tokens. Components only use these names (bg-surface, text-ink, bg-danger-soft …),
+  so the dark palette below re-skins the whole app without per-element dark: classes.
+*/
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  --color-canvas: #f7f6fa;
+  --color-surface: #ffffff;
+  --color-sunken: #efedf4;
+  --color-line: #ebe9f1;
+  --color-line-strong: #d9d6e2;
+  --color-overlay: rgb(29 27 41 / 0.45);
+
+  --color-ink: #1d1b29;
+  --color-ink-soft: #4a4858;
+  --color-muted: #7d7b8b;
+  --color-faint: #a7a5b2;
+
+  --color-brand-50: #f4f1fe;
+  --color-brand-100: #ebe5fd;
+  --color-brand-200: #d6ccfa;
+  --color-brand-500: #7658e8;
+  --color-brand-600: #6646dc;
+  --color-brand-700: #5636c4;
+
+  --color-success: #3fb072;
+  --color-success-ink: #2f7a55;
+  --color-success-soft: #e7f6ee;
+  --color-warning-ink: #a2700f;
+  --color-warning-soft: #fdf3e1;
+  --color-danger-ink: #c4473e;
+  --color-danger-soft: #fdecea;
+  --color-danger-soft-hover: #fbdcd8;
+}
+
+@layer base {
+  :root { color-scheme: light; }
+
+  .dark {
+    color-scheme: dark;
+
+    --color-canvas: #0f0e15;
+    --color-surface: #1a1922;
+    --color-sunken: #14131b;
+    --color-line: #26242f;
+    --color-line-strong: #363443;
+    --color-overlay: rgb(0 0 0 / 0.6);
+
+    --color-ink: #eceaf4;
+    --color-ink-soft: #c2c0cf;
+    --color-muted: #918fa2;
+    --color-faint: #64627a;
+
+    --color-brand-50: #221d38;
+    --color-brand-100: #2c2550;
+    --color-brand-200: #4b3f86;
+    --color-brand-500: #7d62ee;
+    --color-brand-600: #9178f5;
+    --color-brand-700: #c3b6ff;
+
+    --color-success: #3fb875;
+    --color-success-ink: #72d6a0;
+    --color-success-soft: #16291f;
+    --color-warning-ink: #e9bb5d;
+    --color-warning-soft: #2e2514;
+    --color-danger-ink: #f28b82;
+    --color-danger-soft: #34191b;
+    --color-danger-soft-hover: #442022;
+  }
+}
+
+html { -webkit-tap-highlight-color: transparent; }
+body { margin: 0; -webkit-font-smoothing: antialiased; }
+button, input, select, textarea { font: inherit; }
+button:not(:disabled), select:not(:disabled) { cursor: pointer; }
+/* Native <option> lists inherit the page colours in both themes. */
+option { background-color: var(--color-surface); color: var(--color-ink); }
+
+/* Hide horizontal scrollbars on the mobile board while keeping it scrollable. */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
